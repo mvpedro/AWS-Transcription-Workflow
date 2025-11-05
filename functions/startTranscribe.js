@@ -23,7 +23,9 @@ function generateJobName(fileKey, language, chunkIndex = null) {
  */
 async function startTranscriptionJob(bucket, key, language, languageCode, jobMetadata) {
   const jobName = generateJobName(key, language, jobMetadata.chunkIndex);
-  const mediaFileUri = `s3://${bucket}/${key}`;
+  // URL encode the key for the S3 URI
+  const encodedKey = encodeURIComponent(key).replace(/%2F/g, '/');
+  const mediaFileUri = `s3://${bucket}/${encodedKey}`;
 
   const params = {
     TranscriptionJobName: jobName,
@@ -38,47 +40,79 @@ async function startTranscriptionJob(bucket, key, language, languageCode, jobMet
     },
     Settings: {
       ShowSpeakerLabels: false,
-      MaxAlternatives: 1,
     },
   };
 
   console.log(`Starting transcription job: ${jobName} for ${language}`);
-  const command = new StartTranscriptionJobCommand(params);
-  const response = await transcribe.send(command);
-
-  // Store job metadata in DynamoDB
+  console.log(`Media URI: ${mediaFileUri}`);
+  console.log(`Output bucket: ${OUTPUT_BUCKET}`);
+  
   try {
-    const putCommand = new PutItemCommand({
-      TableName: JOBS_TABLE,
-      Item: {
-        jobId: { S: jobName },
-        originalKey: { S: jobMetadata.originalKey || key },
-        chunkIndex: { N: String(jobMetadata.chunkIndex || 0) },
-        totalChunks: { N: String(jobMetadata.totalChunks || 1) },
-        language: { S: language },
-        languageCode: { S: languageCode },
-        status: { S: response.TranscriptionJob.TranscriptionJobStatus || "IN_PROGRESS" },
-        createdAt: { S: new Date().toISOString() },
-        inputBucket: { S: bucket },
-        inputKey: { S: key },
-        outputBucket: { S: OUTPUT_BUCKET },
-      },
+    const command = new StartTranscriptionJobCommand(params);
+    const response = await transcribe.send(command);
+    console.log(`Transcribe job started successfully: ${jobName}`);
+
+    // Store job metadata in DynamoDB
+    try {
+      const putCommand = new PutItemCommand({
+        TableName: JOBS_TABLE,
+        Item: {
+          jobId: { S: jobName },
+          originalKey: { S: jobMetadata.originalKey || key },
+          chunkIndex: { N: String(jobMetadata.chunkIndex || 0) },
+          totalChunks: { N: String(jobMetadata.totalChunks || 1) },
+          language: { S: language },
+          languageCode: { S: languageCode },
+          status: { S: response.TranscriptionJob.TranscriptionJobStatus || "IN_PROGRESS" },
+          createdAt: { S: new Date().toISOString() },
+          inputBucket: { S: bucket },
+          inputKey: { S: key },
+          outputBucket: { S: OUTPUT_BUCKET },
+        },
+      });
+
+      await dynamodb.send(putCommand);
+      console.log(`Job metadata stored in DynamoDB: ${jobName}`);
+    } catch (dbError) {
+      console.warn("Failed to store job metadata in DynamoDB:", dbError.message);
+      console.warn("DynamoDB error details:", JSON.stringify(dbError, null, 2));
+      // Continue even if DynamoDB write fails
+    }
+
+    return response.TranscriptionJob;
+  } catch (error) {
+    console.error(`Error starting transcription job ${jobName}:`, error);
+    console.error(`Error details:`, {
+      message: error.message,
+      name: error.name,
+      code: error.code,
+      stack: error.stack,
     });
-
-    await dynamodb.send(putCommand);
-  } catch (dbError) {
-    console.warn("Failed to store job metadata in DynamoDB:", dbError.message);
-    // Continue even if DynamoDB write fails
+    throw error;
   }
-
-  return response.TranscriptionJob;
 }
 
 export const handler = async (event) => {
   console.log("startTranscribe event:", JSON.stringify(event, null, 2));
 
   try {
+    // Validate required fields
+    if (!event.bucket) {
+      throw new Error("Missing required field: bucket");
+    }
+    if (!event.key) {
+      throw new Error("Missing required field: key");
+    }
+
     const { bucket, key, originalKey, chunkIndex, totalChunks } = event;
+
+    // Validate environment variables
+    if (!INPUT_BUCKET) {
+      throw new Error("Missing environment variable: INPUT_BUCKET");
+    }
+    if (!OUTPUT_BUCKET) {
+      throw new Error("Missing environment variable: OUTPUT_BUCKET");
+    }
 
     const jobMetadata = {
       originalKey: originalKey || key,
@@ -87,6 +121,7 @@ export const handler = async (event) => {
     };
 
     // Start transcription jobs for both English and Spanish
+    console.log(`Starting transcription jobs for bucket: ${bucket}, key: ${key}`);
     const [englishJob, spanishJob] = await Promise.all([
       startTranscriptionJob(bucket, key, "english", "en-US", jobMetadata),
       startTranscriptionJob(bucket, key, "spanish", "es-ES", jobMetadata),

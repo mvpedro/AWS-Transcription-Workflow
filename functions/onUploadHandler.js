@@ -35,7 +35,23 @@ async function invokeLambda(functionName, payload) {
 
   const response = await lambda.send(command);
   if (response.FunctionError) {
-    throw new Error(`Lambda invocation failed: ${response.FunctionError}`);
+    // Try to extract error details from the payload
+    let errorDetails = response.FunctionError;
+    try {
+      const payloadText = new TextDecoder().decode(response.Payload);
+      const errorPayload = JSON.parse(payloadText);
+      if (errorPayload.errorMessage) {
+        errorDetails = `${response.FunctionError}: ${errorPayload.errorMessage}`;
+        if (errorPayload.stack) {
+          errorDetails += `\nStack: ${errorPayload.stack}`;
+        }
+      }
+    } catch (e) {
+      // If we can't parse the error payload, use the FunctionError as is
+      const payloadText = new TextDecoder().decode(response.Payload);
+      errorDetails = `${response.FunctionError}: ${payloadText.substring(0, 500)}`;
+    }
+    throw new Error(`Lambda invocation failed: ${errorDetails}`);
   }
 
   return JSON.parse(new TextDecoder().decode(response.Payload));
