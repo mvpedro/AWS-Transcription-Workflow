@@ -40,6 +40,23 @@ resource "aws_s3_bucket_versioning" "video_subtitles_versioning" {
   }
 }
 
+# Set bucket ownership controls to allow ACLs and ensure proper access
+resource "aws_s3_bucket_ownership_controls" "video_uploads_ownership" {
+  bucket = aws_s3_bucket.video_uploads.id
+
+  rule {
+    object_ownership = "BucketOwnerEnforced"
+  }
+}
+
+resource "aws_s3_bucket_ownership_controls" "video_subtitles_ownership" {
+  bucket = aws_s3_bucket.video_subtitles.id
+
+  rule {
+    object_ownership = "BucketOwnerEnforced"
+  }
+}
+
 # Public access block for security
 resource "aws_s3_bucket_public_access_block" "video_uploads_block" {
   bucket = aws_s3_bucket.video_uploads.id
@@ -73,9 +90,13 @@ resource "aws_s3_bucket_policy" "video_uploads_transcribe_access" {
           Service = "transcribe.amazonaws.com"
         }
         Action = [
-          "s3:GetObject"
+          "s3:GetObject",
+          "s3:ListBucket"
         ]
-        Resource = "${aws_s3_bucket.video_uploads.arn}/*"
+        Resource = [
+          aws_s3_bucket.video_uploads.arn,
+          "${aws_s3_bucket.video_uploads.arn}/*"
+        ]
         Condition = {
           StringEquals = {
             "aws:SourceAccount" = data.aws_caller_identity.current.account_id
@@ -100,9 +121,14 @@ resource "aws_s3_bucket_policy" "video_subtitles_transcribe_access" {
           Service = "transcribe.amazonaws.com"
         }
         Action = [
-          "s3:PutObject"
+          "s3:PutObject",
+          "s3:GetObject",
+          "s3:ListBucket"
         ]
-        Resource = "${aws_s3_bucket.video_subtitles.arn}/*"
+        Resource = [
+          aws_s3_bucket.video_subtitles.arn,
+          "${aws_s3_bucket.video_subtitles.arn}/*"
+        ]
         Condition = {
           StringEquals = {
             "aws:SourceAccount" = data.aws_caller_identity.current.account_id

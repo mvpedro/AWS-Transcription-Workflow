@@ -36,9 +36,14 @@ resource "aws_iam_role_policy" "on_upload_handler_policy" {
         Effect = "Allow"
         Action = [
           "s3:GetObject",
-          "s3:HeadObject"
+          "s3:HeadObject",
+          "s3:ListBucket",
+          "s3:GetObjectVersion"
         ]
-        Resource = "${aws_s3_bucket.video_uploads.arn}/*"
+        Resource = [
+          aws_s3_bucket.video_uploads.arn,
+          "${aws_s3_bucket.video_uploads.arn}/*"
+        ]
       },
       {
         Effect = "Allow"
@@ -93,9 +98,15 @@ resource "aws_iam_role_policy" "split_video_policy" {
         Action = [
           "s3:GetObject",
           "s3:PutObject",
-          "s3:DeleteObject"
+          "s3:DeleteObject",
+          "s3:HeadObject",
+          "s3:ListBucket",
+          "s3:GetObjectVersion"
         ]
-        Resource = "${aws_s3_bucket.video_uploads.arn}/*"
+        Resource = [
+          aws_s3_bucket.video_uploads.arn,
+          "${aws_s3_bucket.video_uploads.arn}/*"
+        ]
       },
       {
         Effect = "Allow"
@@ -154,16 +165,29 @@ resource "aws_iam_role_policy" "start_transcribe_policy" {
       {
         Effect = "Allow"
         Action = [
-          "s3:GetObject"
+          "s3:GetObject",
+          "s3:HeadObject",
+          "s3:ListBucket",
+          "s3:GetObjectVersion"
         ]
-        Resource = "${aws_s3_bucket.video_uploads.arn}/*"
+        Resource = [
+          aws_s3_bucket.video_uploads.arn,
+          "${aws_s3_bucket.video_uploads.arn}/*"
+        ]
       },
       {
         Effect = "Allow"
         Action = [
-          "s3:PutObject"
+          "s3:PutObject",
+          "s3:GetObject",
+          "s3:HeadObject",
+          "s3:ListBucket",
+          "s3:GetObjectVersion"
         ]
-        Resource = "${aws_s3_bucket.video_subtitles.arn}/*"
+        Resource = [
+          aws_s3_bucket.video_subtitles.arn,
+          "${aws_s3_bucket.video_subtitles.arn}/*"
+        ]
       },
       {
         Effect = "Allow"
@@ -287,10 +311,15 @@ resource "aws_iam_role_policy" "store_subtitles_policy" {
         Action = [
           "s3:GetObject",
           "s3:PutObject",
-          "s3:DeleteObject"
+          "s3:DeleteObject",
+          "s3:HeadObject",
+          "s3:ListBucket",
+          "s3:GetObjectVersion"
         ]
         Resource = [
+          aws_s3_bucket.video_subtitles.arn,
           "${aws_s3_bucket.video_subtitles.arn}/*",
+          aws_s3_bucket.video_uploads.arn,
           "${aws_s3_bucket.video_uploads.arn}/*"
         ]
       },
