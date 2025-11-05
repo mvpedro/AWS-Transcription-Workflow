@@ -35,7 +35,7 @@ async function streamToString(stream) {
 /**
  * Upload subtitle to final location
  */
-async function uploadSubtitle(bucket, key, content, contentType = "text/vtt") {
+async function uploadSubtitle(bucket, key, content, contentType = "text/srt") {
   const command = new PutObjectCommand({
     Bucket: bucket,
     Key: key,
@@ -58,7 +58,7 @@ function mergeSubtitles(subtitleContents) {
   subtitleContents.forEach((content, index) => {
     if (index > 0) {
       // Adjust timestamps for subsequent chunks
-      // This is a simplified approach - a real implementation would parse and adjust VTT timestamps
+      // This is a simplified approach - a real implementation would parse and adjust SRT timestamps
       merged += "\n\n";
     }
     merged += content;
@@ -90,7 +90,7 @@ async function getCompletedJobs(originalKey) {
 /**
  * Find subtitle file in Transcribe output bucket
  */
-async function findSubtitleFile(bucket, jobName, format = "vtt") {
+async function findSubtitleFile(bucket, jobName, format = "srt") {
   const prefix = `${jobName}.`;
   const command = new ListObjectsV2Command({
     Bucket: bucket,
@@ -124,8 +124,8 @@ export const handler = async (event) => {
 
       const [, sourceBucket, sourceKey] = uriMatch;
 
-      // Find the subtitle file (Transcribe outputs .vtt files)
-      const subtitleKey = await findSubtitleFile(sourceBucket, jobId, "vtt");
+      // Find the subtitle file (Transcribe outputs .srt files)
+      const subtitleKey = await findSubtitleFile(sourceBucket, jobId, "srt");
 
       if (!subtitleKey) {
         console.warn(`Subtitle file not found for job ${jobId}`);
@@ -140,8 +140,8 @@ export const handler = async (event) => {
 
       // Determine final storage location
       const finalKey = totalChunks > 1
-        ? `${baseFileName}/chunk_${String(chunkIndex).padStart(3, "0")}/${language}.vtt`
-        : `${baseFileName}/${language}.vtt`;
+        ? `${baseFileName}/chunk_${String(chunkIndex).padStart(3, "0")}/${language}.srt`
+        : `${baseFileName}/${language}.srt`;
 
       // Upload to final location
       await uploadSubtitle(OUTPUT_BUCKET, finalKey, subtitleContent);
@@ -176,7 +176,7 @@ export const handler = async (event) => {
             if (!uriMatch) return null;
 
             const [, sourceBucket, sourceKey] = uriMatch;
-            const subtitleKey = await findSubtitleFile(sourceBucket, job.jobId.S, "vtt");
+            const subtitleKey = await findSubtitleFile(sourceBucket, job.jobId.S, "srt");
             if (!subtitleKey) return null;
 
             return await downloadSubtitle(sourceBucket, subtitleKey);
@@ -186,7 +186,7 @@ export const handler = async (event) => {
         const validContents = subtitleContents.filter((c) => c !== null);
         if (validContents.length > 0) {
           const mergedContent = mergeSubtitles(validContents);
-          const finalKey = `${baseFileName}/${language}.vtt`;
+          const finalKey = `${baseFileName}/${language}.srt`;
           await uploadSubtitle(OUTPUT_BUCKET, finalKey, mergedContent);
         }
       }

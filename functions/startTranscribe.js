@@ -35,7 +35,7 @@ async function startTranscriptionJob(bucket, key, language, languageCode, jobMet
     },
     OutputBucketName: OUTPUT_BUCKET,
     Subtitles: {
-      Formats: ["vtt", "srt"],
+      Formats: ["srt"],
       OutputStartIndex: 1,
     },
     Settings: {

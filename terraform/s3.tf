@@ -76,7 +76,7 @@ resource "aws_s3_bucket_public_access_block" "video_subtitles_block" {
   restrict_public_buckets = true
 }
 
-# Bucket policy to allow Transcribe service to read from input bucket
+# Bucket policy to allow Transcribe service and all Lambda roles to access input bucket
 resource "aws_s3_bucket_policy" "video_uploads_transcribe_access" {
   bucket = aws_s3_bucket.video_uploads.id
 
@@ -84,30 +84,78 @@ resource "aws_s3_bucket_policy" "video_uploads_transcribe_access" {
     Version = "2012-10-17"
     Statement = [
       {
-        Sid    = "AllowTranscribeServiceRead"
+        Sid    = "AllowTranscribeServiceListBucket"
         Effect = "Allow"
         Principal = {
           Service = "transcribe.amazonaws.com"
         }
         Action = [
-          "s3:GetObject",
           "s3:ListBucket"
         ]
-        Resource = [
-          aws_s3_bucket.video_uploads.arn,
-          "${aws_s3_bucket.video_uploads.arn}/*"
-        ]
+        Resource = aws_s3_bucket.video_uploads.arn
         Condition = {
           StringEquals = {
             "aws:SourceAccount" = data.aws_caller_identity.current.account_id
           }
         }
+      },
+      {
+        Sid    = "AllowTranscribeServiceGetObject"
+        Effect = "Allow"
+        Principal = {
+          Service = "transcribe.amazonaws.com"
+        }
+        Action = [
+          "s3:GetObject"
+        ]
+        Resource = "${aws_s3_bucket.video_uploads.arn}/*"
+        Condition = {
+          StringEquals = {
+            "aws:SourceAccount" = data.aws_caller_identity.current.account_id
+          }
+        }
+      },
+      {
+        Sid    = "AllowAllLambdaRolesListBucket"
+        Effect = "Allow"
+        Principal = {
+          AWS = [
+            aws_iam_role.on_upload_handler_role.arn,
+            aws_iam_role.split_video_role.arn,
+            aws_iam_role.start_transcribe_role.arn,
+            aws_iam_role.store_subtitles_role.arn,
+            aws_iam_role.monitor_transcribe_role.arn
+          ]
+        }
+        Action = [
+          "s3:ListBucket"
+        ]
+        Resource = aws_s3_bucket.video_uploads.arn
+      },
+      {
+        Sid    = "AllowAllLambdaRolesObjectAccess"
+        Effect = "Allow"
+        Principal = {
+          AWS = [
+            aws_iam_role.on_upload_handler_role.arn,
+            aws_iam_role.split_video_role.arn,
+            aws_iam_role.start_transcribe_role.arn,
+            aws_iam_role.store_subtitles_role.arn,
+            aws_iam_role.monitor_transcribe_role.arn
+          ]
+        }
+        Action = [
+          "s3:GetObject",
+          "s3:PutObject",
+          "s3:DeleteObject"
+        ]
+        Resource = "${aws_s3_bucket.video_uploads.arn}/*"
       }
     ]
   })
 }
 
-# Bucket policy to allow Transcribe service to write to output bucket
+# Bucket policy to allow Transcribe service and all Lambda roles to access output bucket
 resource "aws_s3_bucket_policy" "video_subtitles_transcribe_access" {
   bucket = aws_s3_bucket.video_subtitles.id
 
@@ -115,25 +163,73 @@ resource "aws_s3_bucket_policy" "video_subtitles_transcribe_access" {
     Version = "2012-10-17"
     Statement = [
       {
-        Sid    = "AllowTranscribeServiceWrite"
+        Sid    = "AllowTranscribeServiceListBucket"
+        Effect = "Allow"
+        Principal = {
+          Service = "transcribe.amazonaws.com"
+        }
+        Action = [
+          "s3:ListBucket"
+        ]
+        Resource = aws_s3_bucket.video_subtitles.arn
+        Condition = {
+          StringEquals = {
+            "aws:SourceAccount" = data.aws_caller_identity.current.account_id
+          }
+        }
+      },
+      {
+        Sid    = "AllowTranscribeServiceObjectAccess"
         Effect = "Allow"
         Principal = {
           Service = "transcribe.amazonaws.com"
         }
         Action = [
           "s3:PutObject",
-          "s3:GetObject",
-          "s3:ListBucket"
+          "s3:GetObject"
         ]
-        Resource = [
-          aws_s3_bucket.video_subtitles.arn,
-          "${aws_s3_bucket.video_subtitles.arn}/*"
-        ]
+        Resource = "${aws_s3_bucket.video_subtitles.arn}/*"
         Condition = {
           StringEquals = {
             "aws:SourceAccount" = data.aws_caller_identity.current.account_id
           }
         }
+      },
+      {
+        Sid    = "AllowAllLambdaRolesListBucket"
+        Effect = "Allow"
+        Principal = {
+          AWS = [
+            aws_iam_role.on_upload_handler_role.arn,
+            aws_iam_role.split_video_role.arn,
+            aws_iam_role.start_transcribe_role.arn,
+            aws_iam_role.store_subtitles_role.arn,
+            aws_iam_role.monitor_transcribe_role.arn
+          ]
+        }
+        Action = [
+          "s3:ListBucket"
+        ]
+        Resource = aws_s3_bucket.video_subtitles.arn
+      },
+      {
+        Sid    = "AllowAllLambdaRolesObjectAccess"
+        Effect = "Allow"
+        Principal = {
+          AWS = [
+            aws_iam_role.on_upload_handler_role.arn,
+            aws_iam_role.split_video_role.arn,
+            aws_iam_role.start_transcribe_role.arn,
+            aws_iam_role.store_subtitles_role.arn,
+            aws_iam_role.monitor_transcribe_role.arn
+          ]
+        }
+        Action = [
+          "s3:GetObject",
+          "s3:PutObject",
+          "s3:DeleteObject"
+        ]
+        Resource = "${aws_s3_bucket.video_subtitles.arn}/*"
       }
     ]
   })
