@@ -1,3 +1,6 @@
+# Data source to get current AWS account ID
+data "aws_caller_identity" "current" {}
+
 # Optional: DynamoDB table for job tracking
 resource "aws_dynamodb_table" "transcription_jobs" {
   name           = "transcription-jobs-${var.environment}"

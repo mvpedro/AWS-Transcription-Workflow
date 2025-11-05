@@ -59,3 +59,57 @@ resource "aws_s3_bucket_public_access_block" "video_subtitles_block" {
   restrict_public_buckets = true
 }
 
+# Bucket policy to allow Transcribe service to read from input bucket
+resource "aws_s3_bucket_policy" "video_uploads_transcribe_access" {
+  bucket = aws_s3_bucket.video_uploads.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid    = "AllowTranscribeServiceRead"
+        Effect = "Allow"
+        Principal = {
+          Service = "transcribe.amazonaws.com"
+        }
+        Action = [
+          "s3:GetObject"
+        ]
+        Resource = "${aws_s3_bucket.video_uploads.arn}/*"
+        Condition = {
+          StringEquals = {
+            "aws:SourceAccount" = data.aws_caller_identity.current.account_id
+          }
+        }
+      }
+    ]
+  })
+}
+
+# Bucket policy to allow Transcribe service to write to output bucket
+resource "aws_s3_bucket_policy" "video_subtitles_transcribe_access" {
+  bucket = aws_s3_bucket.video_subtitles.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid    = "AllowTranscribeServiceWrite"
+        Effect = "Allow"
+        Principal = {
+          Service = "transcribe.amazonaws.com"
+        }
+        Action = [
+          "s3:PutObject"
+        ]
+        Resource = "${aws_s3_bucket.video_subtitles.arn}/*"
+        Condition = {
+          StringEquals = {
+            "aws:SourceAccount" = data.aws_caller_identity.current.account_id
+          }
+        }
+      }
+    ]
+  })
+}
+
