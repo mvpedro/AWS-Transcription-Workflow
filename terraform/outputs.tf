@@ -38,3 +38,13 @@ output "dynamodb_table_name" {
   value       = aws_dynamodb_table.transcription_jobs.name
 }
 
+output "step_functions_state_machine_arn" {
+  description = "ARN of the Step Functions state machine"
+  value       = aws_sfn_state_machine.transcription_workflow.arn
+}
+
+output "step_functions_state_machine_name" {
+  description = "Name of the Step Functions state machine"
+  value       = aws_sfn_state_machine.transcription_workflow.name
+}
+

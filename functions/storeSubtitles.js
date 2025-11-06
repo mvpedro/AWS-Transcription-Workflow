@@ -271,8 +271,8 @@ export const handler = async (event) => {
       if (!subtitleKey) {
         console.warn(`Subtitle file not found for job ${jobId}`);
         return {
+          message: "Subtitle file not found",
           statusCode: 404,
-          body: JSON.stringify({ message: "Subtitle file not found" }),
         };
       }
 
@@ -292,14 +292,12 @@ export const handler = async (event) => {
       // Clean up temp files and original job files after successful copy
       const deletedFiles = await cleanupFiles(sourceBucket, jobId, true);
 
+      // Return object directly for Step Functions compatibility
       return {
-        statusCode: 200,
-        body: JSON.stringify({
-          message: "Subtitle stored successfully",
-          location: `${OUTPUT_BUCKET}/${finalKey}`,
-          language,
-          cleanedUp: deletedFiles.length,
-        }),
+        message: "Subtitle stored successfully",
+        location: `${OUTPUT_BUCKET}/${finalKey}`,
+        language,
+        cleanedUp: deletedFiles.length,
       };
     } else {
       // Fallback: query DynamoDB for job info
@@ -341,12 +339,9 @@ export const handler = async (event) => {
       const deletedFiles = await cleanupFiles(OUTPUT_BUCKET, null, false);
 
       return {
-        statusCode: 200,
-        body: JSON.stringify({
-          message: "Subtitles processed",
-          language,
-          cleanedUp: deletedFiles.length,
-        }),
+        message: "Subtitles processed",
+        language,
+        cleanedUp: deletedFiles.length,
       };
     }
   } catch (error) {

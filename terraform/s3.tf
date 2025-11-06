@@ -3,17 +3,30 @@ resource "aws_s3_bucket" "video_uploads" {
   bucket = "${var.input_bucket_name}-${var.environment}-${random_id.bucket_suffix.hex}"
 }
 
-resource "aws_s3_bucket_notification" "video_uploads_notification" {
+# S3 EventBridge notifications are enabled by default in newer AWS accounts
+# We'll use EventBridge to trigger Step Functions (see stepfunctions.tf)
+# The lambda_function notification is kept as a fallback but commented out
+# Uncomment if you need direct Lambda triggering for testing
+
+# resource "aws_s3_bucket_notification" "video_uploads_notification" {
+#   bucket = aws_s3_bucket.video_uploads.id
+#
+#   lambda_function {
+#     lambda_function_arn = aws_lambda_function.on_upload_handler.arn
+#     events              = ["s3:ObjectCreated:*"]
+#     filter_prefix       = ""
+#     filter_suffix       = ".mp4"
+#   }
+#
+#   depends_on = [aws_lambda_permission.s3_trigger_on_upload]
+# }
+
+# Enable EventBridge notifications on the S3 bucket
+# This enables S3 to send events to EventBridge, which will trigger Step Functions
+resource "aws_s3_bucket_notification" "video_uploads_eventbridge" {
   bucket = aws_s3_bucket.video_uploads.id
 
-  lambda_function {
-    lambda_function_arn = aws_lambda_function.on_upload_handler.arn
-    events              = ["s3:ObjectCreated:*"]
-    filter_prefix       = ""
-    filter_suffix       = ".mp4"
-  }
-
-  depends_on = [aws_lambda_permission.s3_trigger_on_upload]
+  eventbridge = true
 }
 
 # Output bucket for subtitles

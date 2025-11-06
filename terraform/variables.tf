@@ -46,3 +46,9 @@ variable "environment" {
   default     = "dev"
 }
 
+variable "ffmpeg_layer_arn" {
+  description = "ARN of the Lambda Layer containing ffmpeg. Leave empty to use a public layer or set a custom ARN."
+  type        = string
+  default     = ""
+}
+

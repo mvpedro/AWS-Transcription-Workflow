@@ -1,13 +1,10 @@
 import { TranscribeClient, GetTranscriptionJobCommand } from "@aws-sdk/client-transcribe";
 import { DynamoDBClient, ScanCommand, UpdateItemCommand } from "@aws-sdk/client-dynamodb";
-import { LambdaClient, InvokeCommand } from "@aws-sdk/client-lambda";
 
 const transcribe = new TranscribeClient();
 const dynamodb = new DynamoDBClient();
-const lambda = new LambdaClient();
 
 const OUTPUT_BUCKET = process.env.OUTPUT_BUCKET;
-const STORE_SUBTITLES_FUNCTION = process.env.STORE_SUBTITLES_FUNCTION;
 const JOBS_TABLE = process.env.JOBS_TABLE || "transcription-jobs-dev";
 
 /**
@@ -77,17 +74,6 @@ async function updateJobStatus(jobId, status, transcriptUri = null) {
   }
 }
 
-/**
- * Invoke storeSubtitles Lambda
- */
-async function invokeStoreSubtitles(payload) {
-  const command = new InvokeCommand({
-    FunctionName: STORE_SUBTITLES_FUNCTION,
-    Payload: JSON.stringify(payload),
-  });
-
-  await lambda.send(command);
-}
 
 /**
  * Check if all jobs for a video/chunk are complete
@@ -110,9 +96,22 @@ async function checkAllJobsComplete(originalKey, chunkIndex, totalChunks) {
     const response = await dynamodb.send(scanCommand);
     return (response.Items || []).length >= 2; // Both English and Spanish
   } else {
-    // Multiple chunks - for simplicity, we'll process each chunk independently
-    // In a more sophisticated implementation, you'd wait for all chunks
-    return true;
+    // Multiple chunks - check if all chunks for this language are complete
+    const scanCommand = new ScanCommand({
+      TableName: JOBS_TABLE,
+      FilterExpression: "originalKey = :key AND totalChunks = :total",
+      ExpressionAttributeValues: {
+        ":key": { S: originalKey },
+        ":total": { N: String(totalChunks) },
+      },
+    });
+
+    const response = await dynamodb.send(scanCommand);
+    const completedJobs = (response.Items || []).filter(
+      (item) => item.status?.S === "COMPLETED"
+    );
+    // For each chunk, we need 2 jobs (English + Spanish) = 2 * totalChunks
+    return completedJobs.length >= 2 * totalChunks;
   }
 }
 
@@ -120,14 +119,69 @@ export const handler = async (event) => {
   console.log("monitorTranscribe event:", JSON.stringify(event, null, 2));
 
   try {
-    // Get all in-progress jobs
+    // Extract event data - handle both direct input and body-wrapped input
+    const eventData = event.body ? JSON.parse(event.body) : event;
+    
+    // If specific job info is provided, check that job
+    if (eventData.jobs && eventData.originalKey) {
+      const { originalKey, jobs, chunkIndex, totalChunks } = eventData;
+      
+      // Check both English and Spanish jobs
+      const englishJob = await checkJobStatus(jobs.english.jobName);
+      const spanishJob = await checkJobStatus(jobs.spanish.jobName);
+      
+      let allComplete = true;
+      const completedJobs = [];
+      
+      if (englishJob.TranscriptionJobStatus === "COMPLETED") {
+        const transcriptUri = englishJob.Transcript?.TranscriptFileUri;
+        await updateJobStatus(jobs.english.jobName, "COMPLETED", transcriptUri);
+        completedJobs.push({
+          language: "english",
+          jobId: jobs.english.jobName,
+          transcriptUri,
+        });
+      } else if (englishJob.TranscriptionJobStatus === "FAILED") {
+        await updateJobStatus(jobs.english.jobName, "FAILED");
+        allComplete = false;
+      } else {
+        allComplete = false;
+      }
+      
+      if (spanishJob.TranscriptionJobStatus === "COMPLETED") {
+        const transcriptUri = spanishJob.Transcript?.TranscriptFileUri;
+        await updateJobStatus(jobs.spanish.jobName, "COMPLETED", transcriptUri);
+        completedJobs.push({
+          language: "spanish",
+          jobId: jobs.spanish.jobName,
+          transcriptUri,
+        });
+      } else if (spanishJob.TranscriptionJobStatus === "FAILED") {
+        await updateJobStatus(jobs.spanish.jobName, "FAILED");
+        allComplete = false;
+      } else {
+        allComplete = false;
+      }
+      
+      // Return object directly for Step Functions compatibility
+      return {
+        message: allComplete ? "All jobs completed" : "Jobs still in progress",
+        allComplete,
+        completedJobs,
+        originalKey,
+        chunkIndex,
+        totalChunks,
+      };
+    }
+
+    // Otherwise, scan for all in-progress jobs (fallback for scheduled monitoring)
     const inProgressJobs = await getInProgressJobs();
 
     if (inProgressJobs.length === 0) {
       console.log("No in-progress jobs found");
-      return {
-        statusCode: 200,
-        body: JSON.stringify({ message: "No jobs to monitor" }),
+      return { 
+        message: "No jobs to monitor",
+        allComplete: true,
       };
     }
 
@@ -136,35 +190,13 @@ export const handler = async (event) => {
     // Check status of each job
     const jobChecks = inProgressJobs.map(async (job) => {
       const jobId = job.jobId.S;
-      const originalKey = job.originalKey.S;
-      const chunkIndex = job.chunkIndex ? parseInt(job.chunkIndex.N) : null;
-      const totalChunks = job.totalChunks ? parseInt(job.totalChunks.N) : 1;
-      const language = job.language.S;
-
       try {
         const jobStatus = await checkJobStatus(jobId);
 
         if (jobStatus.TranscriptionJobStatus === "COMPLETED") {
           console.log(`Job ${jobId} completed`);
-
-          // Update DynamoDB
           const transcriptUri = jobStatus.Transcript?.TranscriptFileUri;
           await updateJobStatus(jobId, "COMPLETED", transcriptUri);
-
-          // Check if all jobs for this video/chunk are complete
-          const allComplete = await checkAllJobsComplete(originalKey, chunkIndex, totalChunks);
-
-          if (allComplete) {
-            // Trigger storeSubtitles
-            await invokeStoreSubtitles({
-              originalKey,
-              chunkIndex,
-              totalChunks,
-              language,
-              transcriptUri,
-              jobId,
-            });
-          }
         } else if (jobStatus.TranscriptionJobStatus === "FAILED") {
           console.error(`Job ${jobId} failed:`, jobStatus.FailureReason);
           await updateJobStatus(jobId, "FAILED");
@@ -179,11 +211,9 @@ export const handler = async (event) => {
     await Promise.all(jobChecks);
 
     return {
-      statusCode: 200,
-      body: JSON.stringify({
-        message: "Job monitoring completed",
-        jobsChecked: inProgressJobs.length,
-      }),
+      message: "Job monitoring completed",
+      jobsChecked: inProgressJobs.length,
+      allComplete: false, // Continue monitoring
     };
   } catch (error) {
     console.error("Error in monitorTranscribe:", error);

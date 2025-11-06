@@ -1,60 +1,32 @@
 import { S3Client, HeadObjectCommand } from "@aws-sdk/client-s3";
-import { LambdaClient, InvokeCommand } from "@aws-sdk/client-lambda";
 
 const s3 = new S3Client();
-const lambda = new LambdaClient();
 
-const INPUT_BUCKET = process.env.INPUT_BUCKET;
 const MAX_FILE_SIZE_MB = parseFloat(process.env.MAX_FILE_SIZE_MB || "100");
-const SPLIT_VIDEO_FUNCTION = process.env.SPLIT_VIDEO_FUNCTION;
-const START_TRANSCRIBE_FUNCTION = process.env.START_TRANSCRIBE_FUNCTION;
 
 /**
  * Extract S3 bucket and key from Lambda event
+ * Supports both S3 event format and Step Functions input format
  */
 function extractS3Info(event) {
-  const record = event.Records?.[0];
-  if (!record) {
-    throw new Error("No S3 record found in event");
+  // Step Functions may pass the event directly with Records
+  if (event.Records?.[0]) {
+    const record = event.Records[0];
+    return {
+      bucket: record.s3.bucket.name,
+      key: decodeURIComponent(record.s3.object.key.replace(/\+/g, " ")),
+    };
+  }
+  
+  // Or it may be passed as direct properties
+  if (event.bucket && event.key) {
+    return {
+      bucket: event.bucket,
+      key: event.key,
+    };
   }
 
-  return {
-    bucket: record.s3.bucket.name,
-    key: decodeURIComponent(record.s3.object.key.replace(/\+/g, " ")),
-  };
-}
-
-/**
- * Invoke another Lambda function
- */
-async function invokeLambda(functionName, payload) {
-  const command = new InvokeCommand({
-    FunctionName: functionName,
-    Payload: JSON.stringify(payload),
-  });
-
-  const response = await lambda.send(command);
-  if (response.FunctionError) {
-    // Try to extract error details from the payload
-    let errorDetails = response.FunctionError;
-    try {
-      const payloadText = new TextDecoder().decode(response.Payload);
-      const errorPayload = JSON.parse(payloadText);
-      if (errorPayload.errorMessage) {
-        errorDetails = `${response.FunctionError}: ${errorPayload.errorMessage}`;
-        if (errorPayload.stack) {
-          errorDetails += `\nStack: ${errorPayload.stack}`;
-        }
-      }
-    } catch (e) {
-      // If we can't parse the error payload, use the FunctionError as is
-      const payloadText = new TextDecoder().decode(response.Payload);
-      errorDetails = `${response.FunctionError}: ${payloadText.substring(0, 500)}`;
-    }
-    throw new Error(`Lambda invocation failed: ${errorDetails}`);
-  }
-
-  return JSON.parse(new TextDecoder().decode(response.Payload));
+  throw new Error("No S3 record found in event");
 }
 
 export const handler = async (event) => {
@@ -74,30 +46,20 @@ export const handler = async (event) => {
 
     console.log(`File ${key} is ${fileSizeMB.toFixed(2)} MB`);
 
-    const payload = {
+    // Return the result for Step Functions to use
+    // Step Functions will use this to decide the next step
+    // Return object directly for Step Functions compatibility
+    const result = {
+      message: "File size checked",
       bucket,
       key,
       originalKey: key,
+      fileSizeMB: parseFloat(fileSizeMB.toFixed(2)),
+      action: fileSizeMB > MAX_FILE_SIZE_MB ? "split" : "transcribe",
     };
-
-    if (fileSizeMB > MAX_FILE_SIZE_MB) {
-      console.log(`File exceeds ${MAX_FILE_SIZE_MB} MB, splitting...`);
-      await invokeLambda(SPLIT_VIDEO_FUNCTION, payload);
-    } else {
-      console.log(`File is within limit, starting transcription...`);
-      await invokeLambda(START_TRANSCRIBE_FUNCTION, payload);
-    }
-
-    return {
-      statusCode: 200,
-      body: JSON.stringify({
-        message: "Processing started",
-        bucket,
-        key,
-        fileSizeMB: fileSizeMB.toFixed(2),
-        action: fileSizeMB > MAX_FILE_SIZE_MB ? "split" : "transcribe",
-      }),
-    };
+    
+    // Return directly for Step Functions, or wrap for API Gateway
+    return result;
   } catch (error) {
     console.error("Error in onUploadHandler:", error);
     throw error;

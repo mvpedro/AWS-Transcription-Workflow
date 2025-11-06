@@ -14,19 +14,19 @@ resource "aws_lambda_function" "on_upload_handler" {
       INPUT_BUCKET     = aws_s3_bucket.video_uploads.id
       OUTPUT_BUCKET    = aws_s3_bucket.video_subtitles.id
       MAX_FILE_SIZE_MB = var.max_file_size_mb
-      SPLIT_VIDEO_FUNCTION = aws_lambda_function.split_video.function_name
-      START_TRANSCRIBE_FUNCTION = aws_lambda_function.start_transcribe.function_name
     }
   }
 }
 
-resource "aws_lambda_permission" "s3_trigger_on_upload" {
-  statement_id  = "AllowS3Invoke"
-  action        = "lambda:InvokeFunction"
-  function_name = aws_lambda_function.on_upload_handler.function_name
-  principal     = "s3.amazonaws.com"
-  source_arn    = aws_s3_bucket.video_uploads.arn
-}
+# S3 direct Lambda trigger permission removed - Step Functions handles the workflow
+# Uncomment if you need direct S3->Lambda triggering for testing
+# resource "aws_lambda_permission" "s3_trigger_on_upload" {
+#   statement_id  = "AllowS3Invoke"
+#   action        = "lambda:InvokeFunction"
+#   function_name = aws_lambda_function.on_upload_handler.function_name
+#   principal     = "s3.amazonaws.com"
+#   source_arn    = aws_s3_bucket.video_uploads.arn
+# }
 
 # Lambda function: splitVideo
 resource "aws_lambda_function" "split_video" {
@@ -43,12 +43,14 @@ resource "aws_lambda_function" "split_video" {
     variables = {
       INPUT_BUCKET     = aws_s3_bucket.video_uploads.id
       OUTPUT_BUCKET    = aws_s3_bucket.video_subtitles.id
-      START_TRANSCRIBE_FUNCTION = aws_lambda_function.start_transcribe.function_name
     }
   }
 
-  # Note: You'll need to add a Lambda Layer with ffmpeg
-  # layers = [aws_lambda_layer_version.ffmpeg_layer.arn]
+  # Use ffmpeg layer if provided
+  # To use a public layer, set ffmpeg_layer_arn in terraform.tfvars or via -var
+  # Example: ffmpeg_layer_arn = "arn:aws:lambda:us-east-1:770693421928:layer:Klayers-p320-ffmpeg:1"
+  # Or build your own using: ./scripts/build-ffmpeg-layer.sh
+  layers = var.ffmpeg_layer_arn != "" ? [var.ffmpeg_layer_arn] : []
 }
 
 # Lambda function: startTranscribe
@@ -66,7 +68,6 @@ resource "aws_lambda_function" "start_transcribe" {
     variables = {
       INPUT_BUCKET     = aws_s3_bucket.video_uploads.id
       OUTPUT_BUCKET    = aws_s3_bucket.video_subtitles.id
-      MONITOR_TRANSCRIBE_FUNCTION = aws_lambda_function.monitor_transcribe.function_name
       JOBS_TABLE = aws_dynamodb_table.transcription_jobs.name
     }
   }
@@ -86,7 +87,6 @@ resource "aws_lambda_function" "monitor_transcribe" {
   environment {
     variables = {
       OUTPUT_BUCKET    = aws_s3_bucket.video_subtitles.id
-      STORE_SUBTITLES_FUNCTION = aws_lambda_function.store_subtitles.function_name
       JOBS_TABLE = aws_dynamodb_table.transcription_jobs.name
     }
   }
@@ -130,36 +130,7 @@ resource "null_resource" "build_functions" {
   }
 }
 
-# Allow Lambda functions to invoke each other
-resource "aws_lambda_permission" "allow_split_video_invoke" {
-  statement_id  = "AllowInvokeFromOnUpload"
-  action        = "lambda:InvokeFunction"
-  function_name = aws_lambda_function.split_video.function_name
-  principal     = "lambda.amazonaws.com"
-  source_arn    = aws_lambda_function.on_upload_handler.arn
-}
-
-resource "aws_lambda_permission" "allow_start_transcribe_from_on_upload" {
-  statement_id  = "AllowInvokeFromOnUpload"
-  action        = "lambda:InvokeFunction"
-  function_name = aws_lambda_function.start_transcribe.function_name
-  principal     = "lambda.amazonaws.com"
-  source_arn    = aws_lambda_function.on_upload_handler.arn
-}
-
-resource "aws_lambda_permission" "allow_start_transcribe_from_split" {
-  statement_id  = "AllowInvokeFromSplitVideo"
-  action        = "lambda:InvokeFunction"
-  function_name = aws_lambda_function.start_transcribe.function_name
-  principal     = "lambda.amazonaws.com"
-  source_arn    = aws_lambda_function.split_video.arn
-}
-
-resource "aws_lambda_permission" "allow_store_subtitles_invoke" {
-  statement_id  = "AllowInvokeFromMonitor"
-  action        = "lambda:InvokeFunction"
-  function_name = aws_lambda_function.store_subtitles.function_name
-  principal     = "lambda.amazonaws.com"
-  source_arn    = aws_lambda_function.monitor_transcribe.arn
-}
+# Lambda permissions are now handled by Step Functions
+# Step Functions will invoke Lambda functions directly, so we don't need
+# Lambda-to-Lambda invoke permissions anymore
 

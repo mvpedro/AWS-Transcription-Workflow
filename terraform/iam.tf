@@ -45,16 +45,7 @@ resource "aws_iam_role_policy" "on_upload_handler_policy" {
           "${aws_s3_bucket.video_uploads.arn}/*"
         ]
       },
-      {
-        Effect = "Allow"
-        Action = [
-          "lambda:InvokeFunction"
-        ]
-        Resource = [
-          aws_lambda_function.split_video.arn,
-          aws_lambda_function.start_transcribe.arn
-        ]
-      }
+      # Lambda invoke permissions removed - Step Functions handles orchestration
     ]
   })
 }
@@ -108,13 +99,7 @@ resource "aws_iam_role_policy" "split_video_policy" {
           "${aws_s3_bucket.video_uploads.arn}/*"
         ]
       },
-      {
-        Effect = "Allow"
-        Action = [
-          "lambda:InvokeFunction"
-        ]
-        Resource = aws_lambda_function.start_transcribe.arn
-      }
+      # Lambda invoke permissions removed - Step Functions handles orchestration
     ]
   })
 }
@@ -251,13 +236,7 @@ resource "aws_iam_role_policy" "monitor_transcribe_policy" {
         ]
         Resource = "*"
       },
-      {
-        Effect = "Allow"
-        Action = [
-          "lambda:InvokeFunction"
-        ]
-        Resource = aws_lambda_function.store_subtitles.arn
-      },
+      # Lambda invoke permissions removed - Step Functions handles orchestration
       {
         Effect = "Allow"
         Action = [

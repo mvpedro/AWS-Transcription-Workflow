@@ -129,22 +129,22 @@ export const handler = async (event) => {
 
     console.log(`Started jobs: ${englishJob.TranscriptionJobName}, ${spanishJob.TranscriptionJobName}`);
 
+    // Return object directly for Step Functions compatibility
     return {
-      statusCode: 200,
-      body: JSON.stringify({
-        message: "Transcription jobs started",
-        jobs: {
-          english: {
-            jobName: englishJob.TranscriptionJobName,
-            status: englishJob.TranscriptionJobStatus,
-          },
-          spanish: {
-            jobName: spanishJob.TranscriptionJobName,
-            status: spanishJob.TranscriptionJobStatus,
-          },
+      message: "Transcription jobs started",
+      jobs: {
+        english: {
+          jobName: englishJob.TranscriptionJobName,
+          status: englishJob.TranscriptionJobStatus,
         },
-        metadata: jobMetadata,
-      }),
+        spanish: {
+          jobName: spanishJob.TranscriptionJobName,
+          status: spanishJob.TranscriptionJobStatus,
+        },
+      },
+      originalKey: jobMetadata.originalKey,
+      chunkIndex: jobMetadata.chunkIndex,
+      totalChunks: jobMetadata.totalChunks,
     };
   } catch (error) {
     console.error("Error in startTranscribe:", error);
