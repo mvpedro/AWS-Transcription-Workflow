@@ -263,48 +263,107 @@ export const handler = async (event) => {
 
     // If transcriptUri is provided, use it directly
     if (transcriptUri) {
-      // Extract bucket and key from URI (format: s3://bucket/key)
-      const uriMatch = transcriptUri.match(/s3:\/\/([^\/]+)\/(.+)/);
-      if (!uriMatch) {
-        throw new Error(`Invalid transcript URI: ${transcriptUri}`);
+      let sourceBucket, sourceKey;
+      
+      // Handle both s3:// and https:// URLs
+      // s3:// format: s3://bucket/key
+      const s3UriMatch = transcriptUri.match(/s3:\/\/([^\/]+)\/(.+)/);
+      if (s3UriMatch) {
+        [, sourceBucket, sourceKey] = s3UriMatch;
+      } else {
+        // HTTPS format: https://s3.region.amazonaws.com/bucket/key
+        // Example: https://s3.us-east-1.amazonaws.com/video-subtitles-dev-92ca3b3b/job_xxx.json
+        const httpsUriMatch = transcriptUri.match(/https?:\/\/s3\.[^\/]+\/([^\/]+)\/(.+)/);
+        if (httpsUriMatch) {
+          sourceBucket = httpsUriMatch[1];
+          sourceKey = httpsUriMatch[2];
+        } else {
+          // Try alternative format: https://bucket.s3.region.amazonaws.com/key
+          const altUriMatch = transcriptUri.match(/https?:\/\/([^.]+)\.s3\.[^\/]+\/(.+)/);
+          if (altUriMatch) {
+            sourceBucket = altUriMatch[1];
+            sourceKey = altUriMatch[2];
+          } else {
+            throw new Error(`Invalid transcript URI format: ${transcriptUri}`);
+          }
+        }
       }
 
-      const [, sourceBucket, sourceKey] = uriMatch;
+      console.log(`Extracted bucket: ${sourceBucket}, key: ${sourceKey} from URI: ${transcriptUri}`);
 
-      // Find the subtitle file (Transcribe outputs .srt files)
-      const subtitleKey = await findSubtitleFile(sourceBucket, jobId, "srt");
+      // The transcriptUri points to the JSON file, but we need the SRT file
+      // Transcribe outputs SRT files with the same base name
+      // If sourceKey is a JSON file, replace extension with .srt
+      let subtitleKey;
+      if (sourceKey.endsWith('.json')) {
+        subtitleKey = sourceKey.replace(/\.json$/, '.srt');
+      } else {
+        // Otherwise, use jobId to construct the SRT filename
+        subtitleKey = `${jobId}.srt`;
+      }
 
-      if (!subtitleKey) {
-        console.warn(`Subtitle file not found for job ${jobId}`);
+      console.log(`Looking for subtitle file: ${subtitleKey}`);
+
+      // Verify the subtitle file exists
+      try {
+        const subtitleContent = await downloadSubtitle(sourceBucket, subtitleKey);
+
+        // Determine final storage location
+        const finalKey = totalChunks > 1
+          ? `${baseFileName}/chunk_${String(chunkIndex).padStart(3, "0")}/${language}.srt`
+          : `${baseFileName}/${language}.srt`;
+
+        // Upload to final location
+        await uploadSubtitle(OUTPUT_BUCKET, finalKey, subtitleContent);
+
+        console.log(`Stored subtitle at ${OUTPUT_BUCKET}/${finalKey}`);
+
+        // Clean up temp files and original job files after successful copy
+        const deletedFiles = await cleanupFiles(sourceBucket, jobId, true);
+
+        // Return object directly for Step Functions compatibility
         return {
-          message: "Subtitle file not found",
-          statusCode: 404,
+          message: "Subtitle stored successfully",
+          location: `${OUTPUT_BUCKET}/${finalKey}`,
+          language,
+          cleanedUp: deletedFiles.length,
+        };
+      } catch (downloadError) {
+        // If direct download fails, try to find the subtitle file
+        console.warn(`Direct download failed, trying to find subtitle file: ${downloadError.message}`);
+        const foundSubtitleKey = await findSubtitleFile(sourceBucket, jobId, "srt");
+        
+        if (!foundSubtitleKey) {
+          console.warn(`Subtitle file not found for job ${jobId} in bucket ${sourceBucket}`);
+          return {
+            message: "Subtitle file not found",
+            statusCode: 404,
+          };
+        }
+        
+        // Download subtitle using found key
+        const subtitleContent = await downloadSubtitle(sourceBucket, foundSubtitleKey);
+        
+        // Determine final storage location
+        const finalKey = totalChunks > 1
+          ? `${baseFileName}/chunk_${String(chunkIndex).padStart(3, "0")}/${language}.srt`
+          : `${baseFileName}/${language}.srt`;
+
+        // Upload to final location
+        await uploadSubtitle(OUTPUT_BUCKET, finalKey, subtitleContent);
+
+        console.log(`Stored subtitle at ${OUTPUT_BUCKET}/${finalKey}`);
+
+        // Clean up temp files and original job files after successful copy
+        const deletedFiles = await cleanupFiles(sourceBucket, jobId, true);
+
+        return {
+          message: "Subtitle stored successfully",
+          location: `${OUTPUT_BUCKET}/${finalKey}`,
+          language,
+          cleanedUp: deletedFiles.length,
         };
       }
-
-      // Download subtitle
-      const subtitleContent = await downloadSubtitle(sourceBucket, subtitleKey);
-
-      // Determine final storage location
-      const finalKey = totalChunks > 1
-        ? `${baseFileName}/chunk_${String(chunkIndex).padStart(3, "0")}/${language}.srt`
-        : `${baseFileName}/${language}.srt`;
-
-      // Upload to final location
-      await uploadSubtitle(OUTPUT_BUCKET, finalKey, subtitleContent);
-
-      console.log(`Stored subtitle at ${OUTPUT_BUCKET}/${finalKey}`);
-
-      // Clean up temp files and original job files after successful copy
-      const deletedFiles = await cleanupFiles(sourceBucket, jobId, true);
-
-      // Return object directly for Step Functions compatibility
-      return {
-        message: "Subtitle stored successfully",
-        location: `${OUTPUT_BUCKET}/${finalKey}`,
-        language,
-        cleanedUp: deletedFiles.length,
-      };
     } else {
       // Fallback: query DynamoDB for job info
       const jobs = await getCompletedJobs(originalKey);

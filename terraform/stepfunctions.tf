@@ -51,7 +51,8 @@ resource "aws_iam_role_policy" "step_functions_policy" {
           aws_lambda_function.split_video.arn,
           aws_lambda_function.start_transcribe.arn,
           aws_lambda_function.monitor_transcribe.arn,
-          aws_lambda_function.store_subtitles.arn
+          aws_lambda_function.store_subtitles.arn,
+          aws_lambda_function.merge_subtitles.arn
         ]
       },
       {
@@ -217,7 +218,42 @@ resource "aws_sfn_state_machine" "transcription_workflow" {
             }
           }
         }
+        Next = "CheckIfMergeNeeded"
+        Catch = [
+          {
+            ErrorEquals = ["States.ALL"]
+            ResultPath  = "$.error"
+            Next        = "FailureState"
+          }
+        ]
+      }
+      CheckIfMergeNeeded = {
+        Type = "Choice"
+        Choices = [
+          {
+            Variable      = "$.splitResult.totalChunks"
+            NumericGreaterThan = 1
+            Next          = "MergeSubtitles"
+          }
+        ]
+        Default = "SuccessState"
+      }
+      MergeSubtitles = {
+        Type     = "Task"
+        Resource = aws_lambda_function.merge_subtitles.arn
+        Parameters = {
+          "originalKey.$" = "$.splitResult.originalKey"
+          "totalChunks.$" = "$.splitResult.totalChunks"
+        }
         Next = "SuccessState"
+        Retry = [
+          {
+            ErrorEquals     = ["States.ALL"]
+            IntervalSeconds = 2
+            MaxAttempts     = 3
+            BackoffRate     = 2.0
+          }
+        ]
         Catch = [
           {
             ErrorEquals = ["States.ALL"]
@@ -287,62 +323,25 @@ resource "aws_sfn_state_machine" "transcription_workflow" {
         Next    = "MonitorTranscription"
       }
       StoreSubtitles = {
-        Type = "Parallel"
-        Branches = [
+        Type     = "Task"
+        Resource = aws_lambda_function.store_subtitles.arn
+        Parameters = {
+          "originalKey.$"   = "$.monitorResult.originalKey"
+          "chunkIndex.$"    = "$.monitorResult.chunkIndex"
+          "totalChunks.$"   = "$.monitorResult.totalChunks"
+          language          = "english"
+          "transcriptUri.$" = "$.monitorResult.completedJobs[0].transcriptUri"
+          "jobId.$"         = "$.monitorResult.completedJobs[0].jobId"
+        }
+        Next = "SuccessState"
+        Retry = [
           {
-            StartAt = "StoreEnglishSubtitles"
-            States = {
-              StoreEnglishSubtitles = {
-                Type     = "Task"
-                Resource = aws_lambda_function.store_subtitles.arn
-                Parameters = {
-                  "originalKey.$"   = "$.monitorResult.originalKey"
-                  "chunkIndex.$"    = "$.monitorResult.chunkIndex"
-                  "totalChunks.$"   = "$.monitorResult.totalChunks"
-                  language          = "english"
-                  "transcriptUri.$" = "$.monitorResult.completedJobs[0].transcriptUri"
-                  "jobId.$"         = "$.monitorResult.completedJobs[0].jobId"
-                }
-                End = true
-                Retry = [
-                  {
-                    ErrorEquals     = ["States.ALL"]
-                    IntervalSeconds = 2
-                    MaxAttempts     = 3
-                    BackoffRate     = 2.0
-                  }
-                ]
-              }
-            }
-          },
-          {
-            StartAt = "StoreSpanishSubtitles"
-            States = {
-              StoreSpanishSubtitles = {
-                Type     = "Task"
-                Resource = aws_lambda_function.store_subtitles.arn
-                Parameters = {
-                  "originalKey.$"   = "$.monitorResult.originalKey"
-                  "chunkIndex.$"    = "$.monitorResult.chunkIndex"
-                  "totalChunks.$"   = "$.monitorResult.totalChunks"
-                  language          = "spanish"
-                  "transcriptUri.$" = "$.monitorResult.completedJobs[1].transcriptUri"
-                  "jobId.$"         = "$.monitorResult.completedJobs[1].jobId"
-                }
-                End = true
-                Retry = [
-                  {
-                    ErrorEquals     = ["States.ALL"]
-                    IntervalSeconds = 2
-                    MaxAttempts     = 3
-                    BackoffRate     = 2.0
-                  }
-                ]
-              }
-            }
+            ErrorEquals     = ["States.ALL"]
+            IntervalSeconds = 2
+            MaxAttempts     = 3
+            BackoffRate     = 2.0
           }
         ]
-        Next = "SuccessState"
         Catch = [
           {
             ErrorEquals = ["States.ALL"]

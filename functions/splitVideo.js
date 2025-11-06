@@ -164,10 +164,14 @@ export const handler = async (event) => {
     cleanup([inputPath, ...chunkPaths]);
 
     // Return object directly for Step Functions compatibility
+    // Preserve the full originalKey for merging purposes
+    const fullOriginalKey = originalKey || key;
+    
     return {
       message: "Video split successfully",
       chunks: chunks,
-      originalKey: baseFileName,
+      originalKey: fullOriginalKey, // Keep full path for merging
+      baseFileName: baseFileName, // Also include base name for reference
       totalChunks: chunkPaths.length,
     };
   } catch (error) {

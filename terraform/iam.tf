@@ -315,3 +315,56 @@ resource "aws_iam_role_policy" "store_subtitles_policy" {
   })
 }
 
+# IAM role for mergeSubtitles Lambda
+resource "aws_iam_role" "merge_subtitles_role" {
+  name = "merge-subtitles-role-${var.environment}"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Action = "sts:AssumeRole"
+        Effect = "Allow"
+        Principal = {
+          Service = "lambda.amazonaws.com"
+        }
+      }
+    ]
+  })
+}
+
+resource "aws_iam_role_policy" "merge_subtitles_policy" {
+  name = "merge-subtitles-policy-${var.environment}"
+  role = aws_iam_role.merge_subtitles_role.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "logs:CreateLogGroup",
+          "logs:CreateLogStream",
+          "logs:PutLogEvents"
+        ]
+        Resource = "arn:aws:logs:*:*:*"
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "s3:GetObject",
+          "s3:PutObject",
+          "s3:DeleteObject",
+          "s3:HeadObject",
+          "s3:ListBucket",
+          "s3:GetObjectVersion"
+        ]
+        Resource = [
+          aws_s3_bucket.video_subtitles.arn,
+          "${aws_s3_bucket.video_subtitles.arn}/*"
+        ]
+      }
+    ]
+  })
+}
+

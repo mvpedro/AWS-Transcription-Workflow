@@ -120,26 +120,19 @@ export const handler = async (event) => {
       totalChunks: totalChunks || 1,
     };
 
-    // Start transcription jobs for both English and Spanish
-    console.log(`Starting transcription jobs for bucket: ${bucket}, key: ${key}`);
-    const [englishJob, spanishJob] = await Promise.all([
-      startTranscriptionJob(bucket, key, "english", "en-US", jobMetadata),
-      startTranscriptionJob(bucket, key, "spanish", "es-ES", jobMetadata),
-    ]);
+    // Start transcription job for English only
+    console.log(`Starting transcription job for bucket: ${bucket}, key: ${key}`);
+    const englishJob = await startTranscriptionJob(bucket, key, "english", "en-US", jobMetadata);
 
-    console.log(`Started jobs: ${englishJob.TranscriptionJobName}, ${spanishJob.TranscriptionJobName}`);
+    console.log(`Started job: ${englishJob.TranscriptionJobName}`);
 
     // Return object directly for Step Functions compatibility
     return {
-      message: "Transcription jobs started",
+      message: "Transcription job started",
       jobs: {
         english: {
           jobName: englishJob.TranscriptionJobName,
           status: englishJob.TranscriptionJobStatus,
-        },
-        spanish: {
-          jobName: spanishJob.TranscriptionJobName,
-          status: spanishJob.TranscriptionJobStatus,
         },
       },
       originalKey: jobMetadata.originalKey,

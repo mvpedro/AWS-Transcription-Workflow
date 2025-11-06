@@ -111,6 +111,24 @@ resource "aws_lambda_function" "store_subtitles" {
   }
 }
 
+# Lambda function: mergeSubtitles
+resource "aws_lambda_function" "merge_subtitles" {
+  filename         = "../functions.zip"
+  function_name    = "merge-subtitles-${var.environment}"
+  role            = aws_iam_role.merge_subtitles_role.arn
+  handler         = "mergeSubtitles.handler"
+  runtime         = var.lambda_runtime
+  timeout         = var.lambda_timeout
+  memory_size     = var.lambda_memory_size
+  source_code_hash = data.archive_file.lambda_zip.output_base64sha256
+
+  environment {
+    variables = {
+      OUTPUT_BUCKET = aws_s3_bucket.video_subtitles.id
+    }
+  }
+}
+
 # Archive Lambda functions
 data "archive_file" "lambda_zip" {
   type        = "zip"

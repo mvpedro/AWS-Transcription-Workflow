@@ -80,7 +80,7 @@ async function updateJobStatus(jobId, status, transcriptUri = null) {
  */
 async function checkAllJobsComplete(originalKey, chunkIndex, totalChunks) {
   if (totalChunks === 1) {
-    // Single file, check both English and Spanish jobs
+    // Single file, check English job only
     const scanCommand = new ScanCommand({
       TableName: JOBS_TABLE,
       FilterExpression: "originalKey = :key AND #status = :status",
@@ -94,9 +94,9 @@ async function checkAllJobsComplete(originalKey, chunkIndex, totalChunks) {
     });
 
     const response = await dynamodb.send(scanCommand);
-    return (response.Items || []).length >= 2; // Both English and Spanish
+    return (response.Items || []).length >= 1; // Only English
   } else {
-    // Multiple chunks - check if all chunks for this language are complete
+    // Multiple chunks - check if all chunks are complete
     const scanCommand = new ScanCommand({
       TableName: JOBS_TABLE,
       FilterExpression: "originalKey = :key AND totalChunks = :total",
@@ -110,8 +110,8 @@ async function checkAllJobsComplete(originalKey, chunkIndex, totalChunks) {
     const completedJobs = (response.Items || []).filter(
       (item) => item.status?.S === "COMPLETED"
     );
-    // For each chunk, we need 2 jobs (English + Spanish) = 2 * totalChunks
-    return completedJobs.length >= 2 * totalChunks;
+    // For each chunk, we need 1 job (English only) = totalChunks
+    return completedJobs.length >= totalChunks;
   }
 }
 
@@ -126,9 +126,8 @@ export const handler = async (event) => {
     if (eventData.jobs && eventData.originalKey) {
       const { originalKey, jobs, chunkIndex, totalChunks } = eventData;
       
-      // Check both English and Spanish jobs
+      // Check English job only
       const englishJob = await checkJobStatus(jobs.english.jobName);
-      const spanishJob = await checkJobStatus(jobs.spanish.jobName);
       
       let allComplete = true;
       const completedJobs = [];
@@ -141,6 +140,7 @@ export const handler = async (event) => {
           jobId: jobs.english.jobName,
           transcriptUri,
         });
+        allComplete = true;
       } else if (englishJob.TranscriptionJobStatus === "FAILED") {
         await updateJobStatus(jobs.english.jobName, "FAILED");
         allComplete = false;
@@ -148,24 +148,9 @@ export const handler = async (event) => {
         allComplete = false;
       }
       
-      if (spanishJob.TranscriptionJobStatus === "COMPLETED") {
-        const transcriptUri = spanishJob.Transcript?.TranscriptFileUri;
-        await updateJobStatus(jobs.spanish.jobName, "COMPLETED", transcriptUri);
-        completedJobs.push({
-          language: "spanish",
-          jobId: jobs.spanish.jobName,
-          transcriptUri,
-        });
-      } else if (spanishJob.TranscriptionJobStatus === "FAILED") {
-        await updateJobStatus(jobs.spanish.jobName, "FAILED");
-        allComplete = false;
-      } else {
-        allComplete = false;
-      }
-      
       // Return object directly for Step Functions compatibility
       return {
-        message: allComplete ? "All jobs completed" : "Jobs still in progress",
+        message: allComplete ? "Job completed" : "Job still in progress",
         allComplete,
         completedJobs,
         originalKey,
