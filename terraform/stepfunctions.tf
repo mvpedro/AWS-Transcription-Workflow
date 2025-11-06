@@ -96,10 +96,10 @@ resource "aws_sfn_state_machine" "transcription_workflow" {
     StartAt = "CheckFileSize"
     States = {
       CheckFileSize = {
-        Type     = "Task"
-        Resource = aws_lambda_function.on_upload_handler.arn
+        Type       = "Task"
+        Resource   = aws_lambda_function.on_upload_handler.arn
         ResultPath = "$.sizeCheck"
-        Next     = "CheckSizeDecision"
+        Next       = "CheckSizeDecision"
         Retry = [
           {
             ErrorEquals     = ["States.ALL"]
@@ -120,19 +120,19 @@ resource "aws_sfn_state_machine" "transcription_workflow" {
         Type = "Choice"
         Choices = [
           {
-            Variable      = "$.sizeCheck.action"
-            StringEquals  = "split"
-            Next          = "SplitVideo"
+            Variable     = "$.sizeCheck.action"
+            StringEquals = "split"
+            Next         = "SplitVideo"
           }
         ]
         Default = "StartTranscribe"
       }
       SplitVideo = {
-        Type     = "Task"
-        Resource = aws_lambda_function.split_video.arn
+        Type       = "Task"
+        Resource   = aws_lambda_function.split_video.arn
         ResultPath = "$.splitResult"
-        InputPath = "$.sizeCheck"
-        Next     = "ProcessChunks"
+        InputPath  = "$.sizeCheck"
+        Next       = "ProcessChunks"
         Retry = [
           {
             ErrorEquals     = ["States.ALL"]
@@ -150,24 +150,24 @@ resource "aws_sfn_state_machine" "transcription_workflow" {
         ]
       }
       ProcessChunks = {
-        Type = "Map"
-        ItemsPath = "$.splitResult.chunks"
+        Type           = "Map"
+        ItemsPath      = "$.splitResult.chunks"
         MaxConcurrency = 3
         Iterator = {
           StartAt = "StartChunkTranscribe"
           States = {
             StartChunkTranscribe = {
-              Type     = "Task"
-              Resource = aws_lambda_function.start_transcribe.arn
+              Type       = "Task"
+              Resource   = aws_lambda_function.start_transcribe.arn
               ResultPath = "$.transcribeResult"
-              Next     = "MonitorChunkTranscription"
+              Next       = "MonitorChunkTranscription"
             }
             MonitorChunkTranscription = {
-              Type     = "Task"
-              Resource = aws_lambda_function.monitor_transcribe.arn
-              InputPath = "$.transcribeResult"
+              Type       = "Task"
+              Resource   = aws_lambda_function.monitor_transcribe.arn
+              InputPath  = "$.transcribeResult"
               ResultPath = "$.monitorResult"
-              Next     = "CheckChunkComplete"
+              Next       = "CheckChunkComplete"
               Retry = [
                 {
                   ErrorEquals     = ["States.ALL"]
@@ -189,22 +189,23 @@ resource "aws_sfn_state_machine" "transcription_workflow" {
               Default = "WaitChunk"
             }
             WaitChunk = {
-              Type     = "Wait"
-              Seconds   = 30
-              Next     = "MonitorChunkTranscription"
+              Type    = "Wait"
+              Seconds = 30
+              Next    = "MonitorChunkTranscription"
             }
             StoreChunkSubtitles = {
               Type     = "Task"
               Resource = aws_lambda_function.store_subtitles.arn
               Parameters = {
-                originalKey.$ = "$.originalKey"
-                chunkIndex.$  = "$.chunkIndex"
-                totalChunks.$ = "$.totalChunks"
-                language.$    = "$.monitorResult.completedJobs[0].language"
-                transcriptUri.$ = "$.monitorResult.completedJobs[0].transcriptUri"
-                jobId.$       = "$.monitorResult.completedJobs[0].jobId"
+                "originalKey.$"   = "$.originalKey"
+                "chunkIndex.$"    = "$.chunkIndex"
+                "totalChunks.$"   = "$.totalChunks"
+                "language.$"      = "$.monitorResult.completedJobs[0].language"
+                "transcriptUri.$" = "$.monitorResult.completedJobs[0].transcriptUri"
+                "jobId.$"         = "$.monitorResult.completedJobs[0].jobId"
               }
-              End      = true
+              ResultPath = "$.storeResult"
+              End        = true
               Retry = [
                 {
                   ErrorEquals     = ["States.ALL"]
@@ -226,11 +227,11 @@ resource "aws_sfn_state_machine" "transcription_workflow" {
         ]
       }
       StartTranscribe = {
-        Type     = "Task"
-        Resource = aws_lambda_function.start_transcribe.arn
-        InputPath = "$.sizeCheck"
+        Type       = "Task"
+        Resource   = aws_lambda_function.start_transcribe.arn
+        InputPath  = "$.sizeCheck"
         ResultPath = "$.transcribeResult"
-        Next     = "MonitorTranscription"
+        Next       = "MonitorTranscription"
         Retry = [
           {
             ErrorEquals     = ["States.ALL"]
@@ -248,11 +249,11 @@ resource "aws_sfn_state_machine" "transcription_workflow" {
         ]
       }
       MonitorTranscription = {
-        Type     = "Task"
-        Resource = aws_lambda_function.monitor_transcribe.arn
-        InputPath = "$.transcribeResult"
+        Type       = "Task"
+        Resource   = aws_lambda_function.monitor_transcribe.arn
+        InputPath  = "$.transcribeResult"
         ResultPath = "$.monitorResult"
-        Next     = "CheckMonitoringResult"
+        Next       = "CheckMonitoringResult"
         Retry = [
           {
             ErrorEquals     = ["States.ALL"]
@@ -281,12 +282,12 @@ resource "aws_sfn_state_machine" "transcription_workflow" {
         Default = "WaitBeforeRetry"
       }
       WaitBeforeRetry = {
-        Type     = "Wait"
-        Seconds   = 30
-        Next     = "MonitorTranscription"
+        Type    = "Wait"
+        Seconds = 30
+        Next    = "MonitorTranscription"
       }
       StoreSubtitles = {
-        Type     = "Parallel"
+        Type = "Parallel"
         Branches = [
           {
             StartAt = "StoreEnglishSubtitles"
@@ -295,14 +296,14 @@ resource "aws_sfn_state_machine" "transcription_workflow" {
                 Type     = "Task"
                 Resource = aws_lambda_function.store_subtitles.arn
                 Parameters = {
-                  originalKey.$ = "$.monitorResult.originalKey"
-                  chunkIndex.$  = "$.monitorResult.chunkIndex"
-                  totalChunks.$ = "$.monitorResult.totalChunks"
-                  language      = "english"
-                  transcriptUri.$ = "$.monitorResult.completedJobs[0].transcriptUri"
-                  jobId.$       = "$.monitorResult.completedJobs[0].jobId"
+                  "originalKey.$"   = "$.monitorResult.originalKey"
+                  "chunkIndex.$"    = "$.monitorResult.chunkIndex"
+                  "totalChunks.$"   = "$.monitorResult.totalChunks"
+                  language          = "english"
+                  "transcriptUri.$" = "$.monitorResult.completedJobs[0].transcriptUri"
+                  "jobId.$"         = "$.monitorResult.completedJobs[0].jobId"
                 }
-                End      = true
+                End = true
                 Retry = [
                   {
                     ErrorEquals     = ["States.ALL"]
@@ -321,14 +322,14 @@ resource "aws_sfn_state_machine" "transcription_workflow" {
                 Type     = "Task"
                 Resource = aws_lambda_function.store_subtitles.arn
                 Parameters = {
-                  originalKey.$ = "$.monitorResult.originalKey"
-                  chunkIndex.$  = "$.monitorResult.chunkIndex"
-                  totalChunks.$ = "$.monitorResult.totalChunks"
-                  language      = "spanish"
-                  transcriptUri.$ = "$.monitorResult.completedJobs[1].transcriptUri"
-                  jobId.$       = "$.monitorResult.completedJobs[1].jobId"
+                  "originalKey.$"   = "$.monitorResult.originalKey"
+                  "chunkIndex.$"    = "$.monitorResult.chunkIndex"
+                  "totalChunks.$"   = "$.monitorResult.totalChunks"
+                  language          = "spanish"
+                  "transcriptUri.$" = "$.monitorResult.completedJobs[1].transcriptUri"
+                  "jobId.$"         = "$.monitorResult.completedJobs[1].jobId"
                 }
-                End      = true
+                End = true
                 Retry = [
                   {
                     ErrorEquals     = ["States.ALL"]
@@ -354,9 +355,9 @@ resource "aws_sfn_state_machine" "transcription_workflow" {
         Type = "Succeed"
       }
       FailureState = {
-        Type = "Fail"
+        Type  = "Fail"
         Error = "WorkflowFailed"
-        Cause.$ = "$.error"
+        Cause = "$.error"
       }
     }
   })

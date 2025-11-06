@@ -250,7 +250,13 @@ export const handler = async (event) => {
   console.log("storeSubtitles event:", JSON.stringify(event, null, 2));
 
   try {
-    const { originalKey, chunkIndex, totalChunks, language, transcriptUri, jobId } = event;
+    // Handle both direct object and potentially stringified input (defensive)
+    const eventData = typeof event === 'string' ? JSON.parse(event) : event;
+    const { originalKey, chunkIndex, totalChunks, language, transcriptUri, jobId } = eventData;
+
+    if (!originalKey) {
+      throw new Error(`Missing required field: originalKey. Event data: ${JSON.stringify(eventData)}`);
+    }
 
     // Get the base filename without extension
     const baseFileName = originalKey.replace(/\.mp4$/, "").replace(/^.*\//, "");
