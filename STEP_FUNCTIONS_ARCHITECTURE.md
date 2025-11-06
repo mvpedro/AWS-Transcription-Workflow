@@ -29,7 +29,7 @@ Step Functions State Machine
     └─→ [Direct Path]
         ├─→ StartTranscribe (Lambda)
         ├─→ MonitorTranscription (Lambda) - polls until complete
-        └─→ StoreSubtitles (Lambda) - parallel for English & Spanish
+        └─→ StoreSubtitles (Lambda)
 ```
 
 ## Key Changes
@@ -91,7 +91,7 @@ The workflow uses a polling pattern:
 
 ### startTranscribe
 - Removed: No direct changes (was already independent)
-- Behavior: Still starts both English and Spanish jobs
+- Behavior: Starts English transcription job
 
 ### monitorTranscribe
 - Removed: `invokeLambda()` call to `storeSubtitles`

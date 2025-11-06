@@ -1,7 +1,7 @@
 # Repository Specification — AWS Transcription Workflow
 
 **Tech Stack:** Terraform + JavaScript (Node.js)
-**Goal:** Automate video upload → splitting → transcription → subtitle storage (English & Spanish)
+**Goal:** Automate video upload → splitting → transcription → subtitle storage (English)
 
 ---
 
@@ -14,8 +14,8 @@ This repository provisions and orchestrates an automated workflow on AWS that:
 3. Checks the file size.
 
    * If **≤100 MB**, process directly.
-   * If **>100 MB**, split it into smaller parts (≤100 MB each).
-4. Sends each resulting file (or segment) to **Amazon Transcribe** to generate subtitles in **English** and **Spanish**.
+   * If **>100 MB**, split it into smaller parts (300s each).
+4. Sends each resulting file (or segment) to **Amazon Transcribe** to generate subtitles in **English**.
 5. Stores the resulting `.srt` or `.vtt` subtitle files back into S3.
 
 ---
@@ -28,6 +28,7 @@ aws-transcribe-pipeline/
 │   ├── main.tf
 │   ├── s3.tf
 │   ├── lambda.tf
+│   ├── stepfunctions.tf
 │   ├── iam.tf
 │   ├── outputs.tf
 │   ├── variables.tf
@@ -38,7 +39,8 @@ aws-transcribe-pipeline/
 │   ├── splitVideo.js
 │   ├── startTranscribe.js
 │   ├── monitorTranscribe.js
-│   └── storeSubtitles.js
+│   ├── storeSubtitles.js
+│   └── mergeSubtitles.js
 │
 ├── scripts/
 │   ├── ffmpegLayer/
@@ -66,20 +68,20 @@ aws-transcribe-pipeline/
 
   ```
   /{original_filename}/english.vtt
-  /{original_filename}/spanish.vtt
   ```
 
 ---
 
 ### 3.2 Lambda Functions (Node.js)
 
-| Function              | Trigger                                      | Description                                                                                                  |
-| --------------------- | -------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
-| **onUploadHandler**   | S3 (ObjectCreated)                           | Receives event from upload bucket. Checks file size and orchestrates logic.                                  |
-| **splitVideo**        | Invoked by `onUploadHandler`                 | Uses `ffmpeg` to split videos >100 MB into multiple parts. Each part uploaded back to S3 (temporary folder). |
-| **startTranscribe**   | Invoked by `onUploadHandler` or `splitVideo` | Starts Transcribe jobs for English and Spanish.                                                              |
-| **monitorTranscribe** | CloudWatch Event or Step Function task       | Monitors job completion and triggers `storeSubtitles`.                                                       |
-| **storeSubtitles**    | Invoked after transcription completes        | Downloads subtitles, stores them in `video-subtitles` bucket.                                                |
+| Function              | Trigger                           | Description                                                                                                  |
+| --------------------- | --------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| **onUploadHandler**   | Step Functions (via EventBridge)  | Checks file size and returns metadata for Step Functions workflow orchestration.                            |
+| **splitVideo**        | Step Functions task               | Uses `ffmpeg` to split videos >100 MB into multiple parts. Each part uploaded back to S3 (temporary folder). |
+| **startTranscribe**   | Step Functions task               | Starts Transcribe job for English.                                                              |
+| **monitorTranscribe** | Step Functions task (polling)     | Monitors transcription job completion status and returns completion information.                           |
+| **storeSubtitles**    | Step Functions task               | Downloads subtitles from Transcribe output and stores them in `video-subtitles` bucket.                     |
+| **mergeSubtitles**    | Step Functions task (optional)    | Merges subtitle files from multiple chunks into a single subtitle file.                                      |
 
 ---
 
@@ -109,30 +111,40 @@ Each job includes:
 }
 ```
 
-A second job with `LanguageCode: "es-ES"` is started after the English job, or in parallel.
+The job uses `LanguageCode: "en-US"` for English transcription.
 
 ---
 
-### 3.5 Step Function (optional but recommended)
+### 3.5 Step Functions (Current Architecture)
 
-Instead of chaining Lambdas manually, define a **State Machine** that manages the workflow:
+The workflow uses **AWS Step Functions** to orchestrate the entire process. The state machine manages the workflow:
 
 ```
 S3 Upload Event
     ↓
-Check file size
+EventBridge (transforms event)
     ↓
-[ <100MB ] ───► Start Transcribe (en + es)
-[ >100MB ] ───► Split Video → Start Transcribe (per chunk)
+Step Functions State Machine
     ↓
-Wait for all jobs to complete
+CheckFileSize (Lambda)
     ↓
-Merge subtitles if split
-    ↓
-Store in S3
+Choice: Split or Transcribe?
+    │
+    ├─→ [Split Path]
+    │   ├─→ SplitVideo (Lambda)
+    │   ├─→ ProcessChunks (Map State - parallel)
+    │   │   ├─→ StartTranscribe (Lambda) - per chunk
+    │   │   ├─→ MonitorTranscription (Lambda) - polls until complete
+    │   │   └─→ StoreSubtitles (Lambda) - per chunk
+    │   └─→ MergeSubtitles (Lambda) - optional
+    │
+    └─→ [Direct Path]
+        ├─→ StartTranscribe (Lambda)
+        ├─→ MonitorTranscription (Lambda) - polls until complete
+        └─→ StoreSubtitles (Lambda)
 ```
 
-Terraform module can define this using `aws_sfn_state_machine`.
+See `STEP_FUNCTIONS_ARCHITECTURE.md` for detailed architecture documentation.
 
 ---
 
@@ -142,32 +154,31 @@ Terraform module can define this using `aws_sfn_state_machine`.
 
 **Responsibilities:**
 
-* Receive S3 event
+* Receive event from Step Functions (via EventBridge from S3)
 * Check file metadata and size
-* Branch:
+* Return file information for Step Functions to make workflow decisions
 
-  * If ≤100 MB → call `startTranscribe` directly
-  * If >100 MB → call `splitVideo` and process each chunk
+**Note:** This function is now invoked by Step Functions rather than directly by S3. It returns file metadata for Step Functions to use in workflow decisions.
 
 **Example:**
 
 ```js
 import { S3Client, HeadObjectCommand } from "@aws-sdk/client-s3";
-import { startTranscribe } from "./startTranscribe.js";
-import { splitVideo } from "./splitVideo.js";
 
 export const handler = async (event) => {
   const s3 = new S3Client();
-  const { bucket, key } = extractS3Info(event);
+  const bucket = event.bucket || event.Records?.[0]?.s3?.bucket?.name;
+  const key = event.key || event.Records?.[0]?.s3?.object?.key;
 
   const head = await s3.send(new HeadObjectCommand({ Bucket: bucket, Key: key }));
   const fileSizeMB = head.ContentLength / (1024 * 1024);
 
-  if (fileSizeMB > 100) {
-    await splitVideo(bucket, key);
-  } else {
-    await startTranscribe(bucket, key);
-  }
+  return {
+    bucket,
+    key,
+    fileSizeMB,
+    needsSplit: fileSizeMB > 100
+  };
 };
 ```
 
@@ -187,7 +198,7 @@ export const handler = async (event) => {
 ffmpeg -i input.mp4 -f segment -segment_time 300 -reset_timestamps 1 chunk_%03d.mp4
 ```
 
-Then upload each chunk and call `startTranscribe` for each.
+Then upload each chunk. Step Functions will process each chunk in parallel.
 
 ---
 
@@ -195,8 +206,8 @@ Then upload each chunk and call `startTranscribe` for each.
 
 **Responsibilities:**
 
-* Submit transcription job(s) to Amazon Transcribe
-* One job for English, one for Spanish
+* Submit transcription job to Amazon Transcribe
+* Creates one job for English transcription
 * Save job metadata to DynamoDB or pass to Step Function
 
 ---
@@ -205,8 +216,9 @@ Then upload each chunk and call `startTranscribe` for each.
 
 **Responsibilities:**
 
-* Poll job status
-* On completion, trigger `storeSubtitles`
+* Poll transcription job status
+* Return completion status to Step Functions
+* Step Functions handles retries and polling logic
 
 ---
 
@@ -216,21 +228,30 @@ Then upload each chunk and call `startTranscribe` for each.
 
 * Read output subtitles from S3 Transcribe output bucket
 * Rename/move to `video-subtitles/{file}/`
-* Optionally merge multiple chunks into one `.vtt` file
+* Stores English subtitle files
+
+### 4.6 `mergeSubtitles.js`
+
+**Responsibilities:**
+
+* Merge subtitle files from multiple video chunks into a single subtitle file
+* Used when videos were split due to size constraints
+* Maintains proper timing and sequence across chunks
 
 ---
 
 ## 🧱 5. Terraform Modules Summary
 
-| File           | Purpose                                                       |
-| -------------- | ------------------------------------------------------------- |
-| `provider.tf`  | AWS provider and region setup                                 |
-| `variables.tf` | Bucket names, prefixes, Lambda configs                        |
-| `s3.tf`        | Create input/output buckets and configure event notifications |
-| `lambda.tf`    | Define Lambda functions, environment variables, and triggers  |
-| `iam.tf`       | Create IAM roles and attach policies                          |
-| `main.tf`      | Optional Step Function + outputs                              |
-| `outputs.tf`   | Export ARNs, bucket names, etc.                               |
+| File              | Purpose                                                       |
+| ----------------- | ------------------------------------------------------------- |
+| `provider.tf`     | AWS provider and region setup                                 |
+| `variables.tf`    | Bucket names, prefixes, Lambda configs                        |
+| `s3.tf`           | Create input/output buckets and configure event notifications |
+| `lambda.tf`       | Define Lambda functions, environment variables               |
+| `stepfunctions.tf`| Define Step Functions state machine and EventBridge rules     |
+| `iam.tf`          | Create IAM roles and attach policies                          |
+| `main.tf`         | DynamoDB table for job tracking                              |
+| `outputs.tf`      | Export ARNs, bucket names, state machine ARN, etc.           |
 
 ---
 
@@ -250,11 +271,15 @@ terraform apply
 
 **Environment Variables (Lambda)**
 
+These are configured in Terraform and automatically set for each Lambda function:
+
 ```
 INPUT_BUCKET=video-uploads
 OUTPUT_BUCKET=video-subtitles
-TRANSCRIBE_ROLE_ARN=...
+DYNAMODB_TABLE=transcription-jobs-{environment}
 ```
+
+Note: Transcribe jobs are created with IAM roles configured in Terraform, not via environment variables.
 
 ---
 
@@ -263,7 +288,7 @@ TRANSCRIBE_ROLE_ARN=...
 * ✅ **SNS notification** on transcript completion
 * ✅ **DynamoDB table** for job tracking (status, timestamps, results)
 * ✅ **Step Function visual workflow** for better observability
-* ✅ **Add translation layer** if you want to automatically translate the English transcript into Spanish instead of dual transcription jobs
+* ✅ **Add translation layer** if you want to automatically translate the English transcript into other languages
 * ✅ **Integrate Amazon Translate + Subtitle merger** for multilingual subtitle generation
 
 ---
@@ -276,6 +301,6 @@ After deployment:
 
   1. Triggers the workflow
   2. Splits large files
-  3. Starts Transcribe jobs in English and Spanish
+  3. Starts Transcribe job in English
   4. Stores final subtitles in `video-subtitles` bucket
 * No manual intervention needed.
