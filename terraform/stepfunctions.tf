@@ -154,14 +154,36 @@ resource "aws_sfn_state_machine" "transcription_workflow" {
         Type           = "Map"
         ItemsPath      = "$.splitResult.chunks"
         MaxConcurrency = 3
+        ResultPath     = "$.chunkResults"
         Iterator = {
           StartAt = "StartChunkTranscribe"
           States = {
             StartChunkTranscribe = {
-              Type       = "Task"
-              Resource   = aws_lambda_function.start_transcribe.arn
+              Type     = "Task"
+              Resource = aws_lambda_function.start_transcribe.arn
+              Parameters = {
+                "bucket.$"      = "$.bucket"
+                "key.$"         = "$.key"
+                "originalKey.$" = "$.originalKey"
+                "chunkIndex.$"  = "$.chunkIndex"
+                "totalChunks.$" = "$.totalChunks"
+              }
               ResultPath = "$.transcribeResult"
               Next       = "MonitorChunkTranscription"
+              Retry = [
+                {
+                  ErrorEquals     = ["Lambda.TooManyRequestsException", "Lambda.ServiceException", "States.TaskFailed"]
+                  IntervalSeconds = 5
+                  MaxAttempts     = 5
+                  BackoffRate     = 2.0
+                },
+                {
+                  ErrorEquals     = ["States.ALL"]
+                  IntervalSeconds = 2
+                  MaxAttempts     = 3
+                  BackoffRate     = 2.0
+                }
+              ]
             }
             MonitorChunkTranscription = {
               Type       = "Task"
@@ -198,9 +220,9 @@ resource "aws_sfn_state_machine" "transcription_workflow" {
               Type     = "Task"
               Resource = aws_lambda_function.store_subtitles.arn
               Parameters = {
-                "originalKey.$"   = "$.originalKey"
-                "chunkIndex.$"    = "$.chunkIndex"
-                "totalChunks.$"   = "$.totalChunks"
+                "originalKey.$"   = "$.monitorResult.originalKey"
+                "chunkIndex.$"    = "$.monitorResult.chunkIndex"
+                "totalChunks.$"   = "$.monitorResult.totalChunks"
                 "language.$"      = "$.monitorResult.completedJobs[0].language"
                 "transcriptUri.$" = "$.monitorResult.completedJobs[0].transcriptUri"
                 "jobId.$"         = "$.monitorResult.completedJobs[0].jobId"
