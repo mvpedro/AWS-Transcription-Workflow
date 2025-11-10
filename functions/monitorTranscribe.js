@@ -149,13 +149,19 @@ export const handler = async (event) => {
       }
       
       // Return object directly for Step Functions compatibility
+      // Ensure completedJobs is always an array and has elements when allComplete is true
+      if (allComplete && completedJobs.length === 0) {
+        console.warn("allComplete is true but completedJobs is empty - this should not happen");
+        allComplete = false; // Reset to false to prevent downstream errors
+      }
+      
       return {
         message: allComplete ? "Job completed" : "Job still in progress",
         allComplete,
-        completedJobs,
-        originalKey,
-        chunkIndex,
-        totalChunks,
+        completedJobs: completedJobs || [],
+        originalKey: originalKey || null,
+        chunkIndex: chunkIndex !== undefined ? chunkIndex : null,
+        totalChunks: totalChunks !== undefined ? totalChunks : 1,
       };
     }
 

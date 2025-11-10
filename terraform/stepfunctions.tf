@@ -184,6 +184,13 @@ resource "aws_sfn_state_machine" "transcription_workflow" {
                   BackoffRate     = 2.0
                 }
               ]
+              Catch = [
+                {
+                  ErrorEquals = ["States.ALL"]
+                  ResultPath  = "$.error"
+                  Next        = "ChunkFailureState"
+                }
+              ]
             }
             MonitorChunkTranscription = {
               Type       = "Task"
@@ -197,6 +204,13 @@ resource "aws_sfn_state_machine" "transcription_workflow" {
                   IntervalSeconds = 2
                   MaxAttempts     = 2
                   BackoffRate     = 2.0
+                }
+              ]
+              Catch = [
+                {
+                  ErrorEquals = ["States.ALL"]
+                  ResultPath  = "$.error"
+                  Next        = "ChunkFailureState"
                 }
               ]
             }
@@ -237,6 +251,18 @@ resource "aws_sfn_state_machine" "transcription_workflow" {
                   BackoffRate     = 2.0
                 }
               ]
+              Catch = [
+                {
+                  ErrorEquals = ["States.ALL"]
+                  ResultPath  = "$.error"
+                  Next        = "ChunkFailureState"
+                }
+              ]
+            }
+            ChunkFailureState = {
+              Type  = "Fail"
+              Error = "ChunkProcessingFailed"
+              Cause = "$.error"
             }
           }
         }
